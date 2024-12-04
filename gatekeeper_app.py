@@ -3,7 +3,6 @@ import httpx
 import logging
 import re
 
-# AWS Client Setup
 import boto3
 
 class InstanceDiscovery:
@@ -41,17 +40,12 @@ discovery = InstanceDiscovery()
 
 # Retrieve the Trusted Host IP
 TRUSTED_HOST_IP = discovery.get_instance_ip_by_name('trusted-host')
-if not TRUSTED_HOST_IP:
-    raise Exception("Trusted Host IP could not be retrieved. Ensure the instance is running and tagged correctly.")
 
-# FastAPI Application Setup
 app = FastAPI()
 
-# Logging Configuration
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("Gatekeeper")
 
-# Trusted Host URL
 TRUSTED_HOST_URL = f"http://{TRUSTED_HOST_IP}:8080"
 logger.info(f"TRUSTED_HOST_URL {TRUSTED_HOST_URL}")
 

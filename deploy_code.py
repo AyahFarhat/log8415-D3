@@ -60,28 +60,24 @@ def deploy_and_run_app(public_ip, pem_key_path, app_filename):
     ssh.close()
 
 
-PEM_KEY_PATH = 'mysql-cluster-key.pem'
+def deploy_code_on_instances():
+    PEM_KEY_PATH = 'mysql-cluster-key.pem'
 
-# Initialize instance discovery
-discovery = InstanceDiscovery()
+    # Initialize instance discovery
+    discovery = InstanceDiscovery()
+
+    GATEKEEPER_IP = discovery.get_instance_ip_by_name('gatekeeper')
+    PROXY_SERVER_IP = discovery.get_instance_ip_by_name('mysql-proxy')
+    TRUSTED_HOST_IP = discovery.get_instance_ip_by_name('trusted-host')
 
 
-GATEKEEPER_IP = discovery.get_instance_ip_by_name('gatekeeper')
-if not GATEKEEPER_IP:
-    raise Exception("Gatekeeper Server IP could not be retrieved. Ensure the instance is running and tagged correctly.")
+    print(f"Gatekeeper IP: {GATEKEEPER_IP}")
+    print(f"Proxy Server IP: {PROXY_SERVER_IP}")
+    print(f"Trusted Host IP: {TRUSTED_HOST_IP}")
 
-PROXY_SERVER_IP = discovery.get_instance_ip_by_name('mysql-proxy')
-if not PROXY_SERVER_IP:
-    raise Exception("Proxy Server IP could not be retrieved. Ensure the instance is running and tagged correctly.")
+    deploy_and_run_app(public_ip=GATEKEEPER_IP, pem_key_path=PEM_KEY_PATH, app_filename='gatekeeper_app.py')
+    deploy_and_run_app(public_ip=TRUSTED_HOST_IP, pem_key_path=PEM_KEY_PATH, app_filename='trusted_host_app.py')
+    deploy_and_run_app(public_ip=PROXY_SERVER_IP, pem_key_path=PEM_KEY_PATH, app_filename='proxy_server_app.py')
 
-TRUSTED_HOST_IP = discovery.get_instance_ip_by_name('trusted-host')
-if not TRUSTED_HOST_IP:
-    raise Exception("Trusted host IP could not be retrieved. Ensure the instance is running and tagged correctly.")
-
-print(f"Gatekeeper IP: {GATEKEEPER_IP}")
-print(f"Proxy Server IP: {PROXY_SERVER_IP}")
-print(f"Trusted Host IP: {TRUSTED_HOST_IP}")
-
-deploy_and_run_app(public_ip=GATEKEEPER_IP, pem_key_path=PEM_KEY_PATH, app_filename='gatekeeper_app.py')
-deploy_and_run_app(public_ip=TRUSTED_HOST_IP, pem_key_path=PEM_KEY_PATH, app_filename='trusted_host_app.py')
-deploy_and_run_app(public_ip=PROXY_SERVER_IP, pem_key_path=PEM_KEY_PATH, app_filename='proxy_server_app.py')
+if __name__ == "__main__":
+    deploy_code_on_instances()

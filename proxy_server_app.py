@@ -5,6 +5,7 @@ import mysql.connector
 import random
 import subprocess
 from typing import List
+import socket
 
 class InstanceDiscovery:
     def __init__(self, region='us-east-1'):
@@ -38,13 +39,9 @@ class InstanceDiscovery:
         
 discovery = InstanceDiscovery()
 
-# Retrieve the Proxy Server IP
+# Retrieve the mysql Servers IPs
 MANAGER_DB = discovery.get_instance_ip_by_name('mysql-manager')
-
-
 WORKER1_DB = discovery.get_instance_ip_by_name('mysql-worker-1')
-
-
 WORKER2_DB = discovery.get_instance_ip_by_name('mysql-worker-2')
 
         
@@ -68,8 +65,7 @@ worker_db_configs = [
     {'host': WORKER2_DB, 'user': 'user', 'password': 'password', 'database': 'sakila'}
 ]
 
-# Current routing mode (can be 'direct', 'random', or 'customized')
-routing_mode = "direct"  # Set the mode here
+routing_mode = "customized"  
 
 def get_mysql_connection(db_config):
     """Connect to a MySQL database with the provided configuration."""
@@ -77,35 +73,38 @@ def get_mysql_connection(db_config):
         return mysql.connector.connect(**db_config)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Database connection failed: {str(e)}")
-
-def ping_server(host: str) -> float:
-    """Ping a host and return the average response time in ms."""
+    
+def tcp_health_check(host: str, port: int = 3306, timeout: int = 2) -> float:
+    """
+    Check if a TCP port is open and return latency in ms, or float('inf') on failure.
+    """
     try:
-        result = subprocess.run(['ping', '-c', '1', host], stdout=subprocess.PIPE, text=True)
-        output = result.stdout
-        # Extract the ping time from the output
-        time_str = output.split("time=")[-1].split(" ")[0]
-        return float(time_str)
+        with socket.create_connection((host, port), timeout=timeout) as conn:
+            return 0 
+    except socket.timeout:
+        logger.error(f"TCP health check to {host}:{port} timed out.")
+        return float('inf')
     except Exception as e:
-        print(f"Failed to ping {host}: {e}")
-        return float('inf')  # If ping fails, return an infinite time
+        logger.error(f"TCP health check failed for {host}:{port}: {e}")
+        return float('inf')
+
+
 
 def get_least_ping_worker() -> dict:
-    """Find and return the Worker node with the least ping time."""
-    ping_times = [(worker, ping_server(worker['host'])) for worker in worker_db_configs]
-    # Sort by ping time and return the worker with the lowest time
+    """Find and return the Worker node with the least latency on port 3306."""
+    ping_times = [(worker, tcp_health_check(worker['host'], 3306)) for worker in worker_db_configs]
     best_worker = min(ping_times, key=lambda x: x[1])[0]
     return best_worker
+
 
 @app.get("/read")
 async def read_data(request: Request):
     try:
-        data = await request.json()
-        query = data.get("query")
-        
+
+        query = request.query_params.get("query")
+        logger.info(f"Executing query: {query}")
         if not query:
             raise HTTPException(status_code=400, detail="Query is required.")
-        logger.info(f"QUERY {   query}")
         
         if routing_mode == "direct":
             # Directly use the manager node for read operations
@@ -121,6 +120,7 @@ async def read_data(request: Request):
 
         conn = get_mysql_connection(db_config)
         cursor = conn.cursor(dictionary=True)
+        logger.info(f"Executing query: {query}")
         cursor.execute(query)
         results = cursor.fetchall()
         conn.close()

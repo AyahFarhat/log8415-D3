@@ -1,10 +1,7 @@
 import asyncio
 import time
-
 import boto3
 import httpx
-import json
-
 
 
 class InstanceDiscovery:
@@ -19,8 +16,10 @@ class InstanceDiscovery:
         Get the public IP address of an instance by its Name tag.
         """
         try:
-            filters = [{'Name': 'tag:Name', 'Values': [instance_name]},
-                           {'Name': 'instance-state-name', 'Values': ['running']}]
+            filters = [
+                {'Name': 'tag:Name', 'Values': [instance_name]},
+                {'Name': 'instance-state-name', 'Values': ['running']}
+            ]
             instances = list(self.ec2_resource.instances.filter(Filters=filters))
             
             if not instances:
@@ -36,30 +35,15 @@ class InstanceDiscovery:
         except Exception as e:
             print(f"Error fetching IP for instance {instance_name}: {e}")
             return None
-        
-discovery=InstanceDiscovery()
-        
-GATEKEEPER_SERVER_IP = discovery.get_instance_ip_by_name('gatekeeper')
-if not GATEKEEPER_SERVER_IP:
-    raise Exception("Gatekeeper Server IP could not be retrieved. Ensure the instance is running and tagged correctly.")
 
-# Gatekeeper URL
-GATEKEEPER_URL = f"http://{GATEKEEPER_SERVER_IP}:8080"
-print(GATEKEEPER_URL)
-# Read and Write queries
-READ_QUERY = {"query": "SELECT * FROM sakila.actor LIMIT 10"}
-WRITE_QUERY = {"query": "INSERT INTO sakila.actor (first_name, last_name) VALUES ('Test', 'User')"}
 
-# Number of requests
-NUM_REQUESTS = 1000
-
-async def send_requests(mode):
+async def send_requests(gatekeeper_url, mode, num_requests, read_query, write_query):
     """
-    Send 1000 read and 1000 write requests to the Gatekeeper and measure performance.
+    Send `num_requests` read and write requests to the Gatekeeper and measure performance.
     """
     # Set the mode on the Gatekeeper
     async with httpx.AsyncClient() as client:
-        response = await client.put(f"{GATEKEEPER_URL}/set_mode/{mode}")
+        response = await client.put(f"{gatekeeper_url}/set_mode/{mode}")
         if response.status_code != 200:
             raise Exception(f"Failed to set mode to {mode}: {response.text}")
 
@@ -68,9 +52,9 @@ async def send_requests(mode):
     # Send read requests
     read_times = []
     async with httpx.AsyncClient() as client:
-        for _ in range(NUM_REQUESTS):
+        for _ in range(num_requests):
             start_time = time.perf_counter()
-            response = await client.post(f"{GATEKEEPER_URL}/process", json=READ_QUERY)
+            response = await client.post(f"{gatekeeper_url}/process", json=read_query)
             end_time = time.perf_counter()
             read_times.append(end_time - start_time)
             if response.status_code != 200:
@@ -79,9 +63,9 @@ async def send_requests(mode):
     # Send write requests
     write_times = []
     async with httpx.AsyncClient() as client:
-        for _ in range(NUM_REQUESTS):
+        for _ in range(num_requests):
             start_time = time.perf_counter()
-            response = await client.post(f"{GATEKEEPER_URL}/process", json=WRITE_QUERY)
+            response = await client.post(f"{gatekeeper_url}/process", json=write_query)
             end_time = time.perf_counter()
             write_times.append(end_time - start_time)
             if response.status_code != 200:
@@ -99,7 +83,8 @@ async def send_requests(mode):
         "total_write_time": sum(write_times),
     }
 
-async def benchmark():
+
+async def benchmark(gatekeeper_url, num_requests, read_query, write_query):
     """
     Benchmark the three modes and print the results.
     """
@@ -107,10 +92,9 @@ async def benchmark():
 
     for mode in ["direct", "random", "customized"]:
         print(f"Benchmarking mode: {mode}")
-        result = await send_requests(mode)
+        result = await send_requests(gatekeeper_url, mode, num_requests, read_query, write_query)
         results.append(result)
 
-    # Print results
     print("\nBenchmark Results:")
     for result in results:
         print(f"Mode: {result['mode']}")
@@ -120,7 +104,21 @@ async def benchmark():
         print(f"  Total Write Time: {result['total_write_time']:.2f} seconds")
         print("-" * 50)
 
-# Run the benchmark
+
+def benchmark_all():
+    discovery = InstanceDiscovery()
+    gatekeeper_server_ip = discovery.get_instance_ip_by_name('gatekeeper')
+    if not gatekeeper_server_ip:
+        print("Could not retrieve Gatekeeper server IP. Exiting.")
+        return
+
+    gatekeeper_url = f"http://{gatekeeper_server_ip}:8080"
+    read_query = {"query": "SELECT * FROM sakila.actor LIMIT 10"}
+    write_query = {"query": "INSERT INTO sakila.actor (first_name, last_name) VALUES ('Test', 'User')"}
+    num_requests = 1000
+
+    asyncio.run(benchmark(gatekeeper_url, num_requests, read_query, write_query))
+
+
 if __name__ == "__main__":
-    print(GATEKEEPER_URL)
-    asyncio.run(benchmark())
+    benchmark_all()

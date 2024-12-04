@@ -2,8 +2,10 @@ import boto3
 import time
 import paramiko
 import os
+import requests
 
 ROOT_PASSWORD='password'
+
 def create_user_and_grant_privileges(ssh_client, db_user, db_password):
     """
     Create a MySQL user and grant privileges on the current instance.
@@ -26,6 +28,9 @@ class MySQLClusterSetup:
         """
         Initialize AWS resources and configurations
         """
+        # Get public IP address of the user
+        self.my_ip = requests.get('https://api.ipify.org').text + "/32"
+        
         # AWS Clients
         self.ec2 = boto3.client('ec2', region_name=region)
         self.ec2_resource = boto3.resource('ec2', region_name=region)
@@ -34,7 +39,6 @@ class MySQLClusterSetup:
         self.key_pair_name = 'mysql-cluster-key'
         self.key_pair_path = f'./{self.key_pair_name}.pem'
         
-        # Instance configurations
         self.instance_configs = {
             'standalone_instances': [
                 {'name': 'mysql-manager', 'type': 't2.micro'},
@@ -50,43 +54,38 @@ class MySQLClusterSetup:
             ]
         }
         
-        # Security Group configurations
         self.security_groups = {
-            'mysql_cluster_sg': {  # Updated key
+            'mysql_cluster_sg': { 
                 'name': 'mysql-cluster-sg',
                 'description': 'Security group for MySQL cluster',
                 'ingress_rules': [
-                    {'port': 22, 'protocol': 'tcp', 'cidr': '0.0.0.0/0'},  # SSH
-                    # {'port': 3306, 'protocol': 'tcp', 'source_sg': 'mysql-proxy-sg'},
-                    # {'port': 3306, 'protocol': 'tcp', 'source_sg': 'mysql-cluster-sg'},
-                    {'port': 3306, 'protocol': 'tcp', 'cidr': '0.0.0.0/0'},
+                    {'port': 3306, 'protocol': 'tcp', 'source_sg': 'proxy_sg'},
+                    {'port': 3306, 'protocol': 'tcp', 'source_sg': 'mysql_cluster_sg'},
+                    {'port': 22, 'protocol': 'tcp', 'cidr': self.my_ip},  # Allow SSH from machine's IP
                 ]
             },
             'proxy_sg': {
                 'name': 'mysql-proxy-sg',
                 'description': 'Security group for MySQL proxy',
                 'ingress_rules': [
-                    {'port': 22, 'protocol': 'tcp', 'cidr': '0.0.0.0/0'},
-                    # {'port': 8080, 'protocol': 'tcp', 'source_sg': 'trusted-host-sg'}, 
-                    {'port': 8080, 'protocol': 'tcp', 'cidr': '0.0.0.0/0'},
+                    {'port': 8080, 'protocol': 'tcp', 'source_sg': 'trusted_host_sg'},
+                    {'port': 22, 'protocol': 'tcp', 'cidr': self.my_ip}, 
                 ],
             },
             'trusted_host_sg': {
                 'name': 'trusted-host-sg',
                 'description': 'Security group for Trusted Host',
                 'ingress_rules': [
-                    {'port': 22, 'protocol': 'tcp', 'cidr': '0.0.0.0/0'},
-                    # {'port': 8080, 'protocol': 'tcp', 'source_sg': 'gatekeeper-sg'},  # Reference updated key
-                    {'port': 8080, 'protocol': 'tcp', 'cidr': '0.0.0.0/0'},
+                    {'port': 8080, 'protocol': 'tcp', 'source_sg': 'gatekeeper_sg'},
+                    {'port': 22, 'protocol': 'tcp', 'cidr': self.my_ip}, 
                 ],
             },
             'gatekeeper_sg': {
                 'name': 'gatekeeper-sg',
                 'description': 'Security group for Gatekeeper and Trusted Host',
                 'ingress_rules': [
-                    {'port': 22, 'protocol': 'tcp', 'cidr': '0.0.0.0/0'},
-                    {'port': 8080, 'protocol': 'tcp', 'cidr': '0.0.0.0/0'},
-                    
+                    {'port': 22, 'protocol': 'tcp', 'cidr': self.my_ip}, 
+                    {'port': 8080, 'protocol': 'tcp', 'cidr': '0.0.0.0/0'},  # Open 8080 for external traffic
                 ]
             }
         }
@@ -120,10 +119,10 @@ class MySQLClusterSetup:
         
         for sg_key, sg_config in self.security_groups.items():
             try:
-                # Create VPC (if not exists, use default)
+                
                 vpc = list(self.ec2_resource.vpcs.filter(Filters=[{'Name': 'isDefault', 'Values': ['true']}]))[0]
                 
-                # Create security group
+                
                 security_group = vpc.create_security_group(
                     GroupName=sg_config['name'],
                     Description=sg_config['description']
@@ -150,14 +149,23 @@ class MySQLClusterSetup:
                             CidrIp=rule['cidr']
                         )
                     # Handle ingress from another security group
-                    elif 'source_sg' in rule:    
-                        print(f"Adding rule from {rule['source_sg']} to {sg_config['name']}.")
+                    elif 'source_sg' in rule:
+                        source_sg_id = security_group_ids.get(rule['source_sg'])
+                        if not source_sg_id:
+                            raise Exception(f"Source security group {rule['source_sg']} not found.")
+                        
+                        # Use IpPermissions to set the rule with protocol and ports
                         security_group.authorize_ingress(
-                            # IpProtocol=rule['protocol'],
-                            # FromPort=rule['port'],
-                            # ToPort=rule['port'],
-                            SourceSecurityGroupName= rule['source_sg'],
-                            # GroupId=source_sg_id
+                            IpPermissions=[
+                                {
+                                    'IpProtocol': rule['protocol'],
+                                    'FromPort': rule['port'],
+                                    'ToPort': rule['port'],
+                                    'UserIdGroupPairs': [
+                                        {'GroupId': source_sg_id}
+                                    ]
+                                }
+                            ]
                         )
 
 
@@ -196,7 +204,7 @@ class MySQLClusterSetup:
                 
                 # Launch instance
                 instance = self.ec2_resource.create_instances(
-                    ImageId='ami-005fc0f236362e99f',  # Ubuntu 22.04 LTS
+                    ImageId='ami-005fc0f236362e99f',
                     InstanceType=instance_config['type'],
                     KeyName=self.key_pair_name,
                     MinCount=1,
@@ -232,8 +240,7 @@ class MySQLClusterSetup:
     def install_mysql_and_sakila(self, instances):
         """
         Install MySQL and Sakila database on specific instances with replication setup
-        """
-        # Define instance roles
+        """  
         mysql_manager = instances['mysql-manager']
         mysql_worker_1 = instances['mysql-worker-1']
         mysql_worker_2 = instances['mysql-worker-2']
@@ -303,12 +310,14 @@ class MySQLClusterSetup:
                     slave_commands = [
                         # Stop slave process
                         f'sudo mysql -u root -p\'{ROOT_PASSWORD}\' -e "STOP SLAVE;"',
+                        
                         # Configure slave to use the updated master settings
                         f'sudo mysql -u root -p\'{ROOT_PASSWORD}\' -e "CHANGE MASTER TO MASTER_HOST=\'{master_instance["public_ip"]}\', '
                         f'MASTER_USER=\'replication_user\', '
                         f'MASTER_PASSWORD=\'replication_password\', '
                         f'MASTER_LOG_FILE=\'{log_file}\', '
                         f'MASTER_LOG_POS={log_pos};"',
+                        
                         # Start slave process
                         f'sudo mysql -u root -p\'{ROOT_PASSWORD}\' -e "START SLAVE;"',
                         
@@ -331,7 +340,6 @@ class MySQLClusterSetup:
             except Exception as e:
                 print(f"Error setting up MySQL replication: {e}")
 
-        # Modify the existing installation method to add replication
         for name, instance_info in instances.items():
             if name not in ['mysql-manager', 'mysql-worker-1', 'mysql-worker-2']:
                 continue
@@ -353,7 +361,7 @@ class MySQLClusterSetup:
                     raise ValueError(f"Unknown server role: {name}")    
                 print("server id: ", server_id)
 
-                # MySQL and Sakila installation script (existing code)
+                # MySQL and Sakila installation 
                 install_commands = [
                     f'sudo debconf-set-selections <<< "mysql-server mysql-server/root_password password {ROOT_PASSWORD}"',
                     f'sudo debconf-set-selections <<< "mysql-server mysql-server/root_password_again password {ROOT_PASSWORD}"',
@@ -399,28 +407,22 @@ class MySQLClusterSetup:
         """
         try:
             # Create key pair
-            # self.create_key_pair()
+            self.create_key_pair()
             
             # Create security groups
             security_group_ids = self.create_security_groups()
             print("security_group_ids", security_group_ids)
-
             
-            
-            # security_group_ids= {'mysql_cluster_sg': 'sg-0473f48b7bb5f001f', 'proxy_sg': 'sg-01fc5977d3f55a23d', 'trusted_host_sg': 'sg-04d04c4aa75c5c34e', 'gatekeeper_sg': 'sg-069d82b9bd5daf005'}
             # Launch instances
             instances = self.launch_instances(security_group_ids)
             print("instances", instances)
 
-            # # Wait for instances to be fully initialized
+            # # # Wait for instances to be fully initialized
             time.sleep(60)
             
-            # # Install MySQL and Sakila
+            # # # Install MySQL and Sakila
             self.install_mysql_and_sakila(instances)
-            
-            # Harden security
-            # self.harden_security(instances)
-            
+                        
             print("MySQL Cluster Setup Complete!")
             
             return instances
@@ -429,10 +431,94 @@ class MySQLClusterSetup:
             print(f"Error in MySQL cluster setup: {e}")
             return None
 
+def secure_instance(ssh_client, instance_name, gatekeeper_ip):
+    """
+    Secure the instance by setting up a firewall, removing unused services, 
+    and disabling unnecessary ports based on instance type.
+    """
+    try:
+        print(f"Securing instance: {instance_name}")
+        
+        # Firewall (IPTables) Configuration
+        firewall_commands = ["sudo iptables -F"]  # Flush existing rules
+        
+        if instance_name == "gatekeeper":
+            firewall_commands += [
+                "sudo iptables -A INPUT -p tcp --dport 8080 -j ACCEPT",  # Allow external traffic on port 8080
+                "sudo iptables -A INPUT -p tcp --dport 22 -j ACCEPT",  # Allow SSH
+                "sudo iptables -A INPUT -j DROP",  # Drop all other incoming traffic
+            ]
+        elif instance_name == "trusted-host":
+            if not gatekeeper_ip:
+                raise ValueError("Gatekeeper IP is required for Trusted Host firewall rules")
+            firewall_commands += [
+                f"sudo iptables -A INPUT -p tcp --dport 8080 -s {gatekeeper_ip} -j ACCEPT",  # Allow Gatekeeper traffic only
+                "sudo iptables -A INPUT -p tcp --dport 22 -j ACCEPT",  # Allow SSH
+                "sudo iptables -A INPUT -j DROP",  # Drop all other incoming traffic
+            ]
+
+        # Disable Unnecessary Ports
+        disable_ports_commands = [
+            "sudo ufw default deny incoming",  # Deny all incoming traffic by default
+            "sudo ufw allow 22",  # Allow SSH
+        ]
+        
+        if instance_name == "gatekeeper":
+            disable_ports_commands += ["sudo ufw allow 8080"]  # Allow port 8080 for Gatekeeper
+        elif instance_name == "trusted-host":
+            # Trusted Host does not allow public access to port 8080
+            pass
+        
+        disable_ports_commands += ["sudo ufw enable"]  # Enable UFW rules
+
+        # Execute Commands
+        for cmd in firewall_commands + disable_ports_commands:
+            stdin, stdout, stderr = ssh_client.exec_command(cmd)
+            print(f"Executing on {instance_name}: {cmd}")
+            print(stdout.read().decode())
+            print(stderr.read().decode())
+
+        print(f"Instance {instance_name} secured successfully!")
+    except Exception as e:
+        print(f"Error securing instance {instance_name}: {e}")
+
+
+def configure_security(instances, key_pair_path):
+    """
+    Configure security measures for Trusted Host and Gatekeeper.
+    """
+    for instance_name in ['trusted-host', 'gatekeeper']:
+        try:
+            if instance_name not in instances:
+                print(f"{instance_name} not found, skipping security configuration.")
+                continue
+
+            # SSH connection to the instance
+            ssh = paramiko.SSHClient()
+            ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+            
+            private_key = paramiko.RSAKey.from_private_key_file(key_pair_path)
+            
+            ssh.connect(
+                hostname=instances[instance_name]['public_ip'],
+                username='ubuntu',
+                pkey=private_key
+            )
+
+            # Secure the instance
+            secure_instance(ssh, instance_name, instances.get('gatekeeper', {}).get('public_ip'))
+            
+            ssh.close()
+        except Exception as e:
+            print(f"Error configuring security for {instance_name}: {e}")
+
 def main():
-    # Initialize and run the cluster setup
     cluster_setup = MySQLClusterSetup()
-    cluster_setup.setup_mysql_cluster()
+    instances = cluster_setup.setup_mysql_cluster()
+
+    if instances:
+        # Secure Trusted Host and Gatekeeper
+        configure_security(instances, cluster_setup.key_pair_path)
 
 if __name__ == '__main__':
     main()

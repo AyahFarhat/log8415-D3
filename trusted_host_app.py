@@ -2,7 +2,6 @@ import logging
 from fastapi import FastAPI, HTTPException, Request
 import httpx
 
-# AWS Client Setup
 import boto3
 
 class InstanceDiscovery:
@@ -28,7 +27,6 @@ class InstanceDiscovery:
             instance = instances[0]
             if instance.state['Name'] == 'running':
                 return instance.public_ip_address
-                # return instance.private_ip_address or instance.public_ip_address
             else:
                 print(f"Instance {instance_name} is not in running state.")
                 return None
@@ -36,22 +34,15 @@ class InstanceDiscovery:
             print(f"Error fetching IP for instance {instance_name}: {e}")
             return None
 
-# Initialize instance discovery
 discovery = InstanceDiscovery()
 
-# Retrieve the Proxy Server IP
 PROXY_SERVER_IP = discovery.get_instance_ip_by_name('mysql-proxy')
 
-if not PROXY_SERVER_IP:
-    raise Exception("Proxy Server IP could not be retrieved. Ensure the instance is running and tagged correctly.")
-
-# FastAPI Application Setup
 app = FastAPI()
-# Logging Configuration
+
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("truested_host")
 
-# Proxy Server URL
 PROXY_SERVER_URL = f"http://{PROXY_SERVER_IP}:8080"
 logger.info(f"PROXY_SERVER_URL {PROXY_SERVER_URL}")
 
@@ -62,10 +53,8 @@ async def process_request(request: Request):
     Process requests from the Gatekeeper and forward them to the Proxy.
     """
     try:
-        # Parse incoming JSON
         data = await request.json()
         
-        # Validate the presence of the query field
         if "query" not in data:
             raise HTTPException(status_code=400, detail="Invalid request: 'query' field is required")
 
@@ -97,10 +86,8 @@ async def process_request(request: Request):
                     json={"query": query}
                 )
 
-        # Raise exception if Proxy returns an error
         proxy_response.raise_for_status()
 
-        # Return the response from the Proxy
         return proxy_response.json()
     except httpx.HTTPStatusError as http_error:
         raise HTTPException(
