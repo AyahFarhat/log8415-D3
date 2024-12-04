@@ -105,7 +105,7 @@ async def benchmark(gatekeeper_url, num_requests, read_query, write_query):
         print("-" * 50)
 
 
-def benchmark_all():
+async def benchmark_all():
     discovery = InstanceDiscovery()
     gatekeeper_server_ip = discovery.get_instance_ip_by_name('gatekeeper')
     if not gatekeeper_server_ip:
@@ -117,7 +117,9 @@ def benchmark_all():
     write_query = {"query": "INSERT INTO sakila.actor (first_name, last_name) VALUES ('Test', 'User')"}
     num_requests = 1000
 
-    asyncio.run(benchmark(gatekeeper_url, num_requests, read_query, write_query))
+    # Call the benchmark coroutine directly (no nested asyncio.run)
+    await benchmark(gatekeeper_url, num_requests, read_query, write_query)
+
 
 
 if __name__ == "__main__":
