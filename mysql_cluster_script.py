@@ -1,15 +1,20 @@
 import time
 import asyncio
-from create_instances import MySQLClusterSetup
+from create_instances import MySQLClusterSetup, configure_security
 from deploy_code import deploy_code_on_instances
 from benchmark_requests import benchmark_all
 
 def main():
     print("Starting MySQL cluster setup...")
     cluster_setup = MySQLClusterSetup()
-    cluster_setup.setup_mysql_cluster()
+    instances = cluster_setup.setup_mysql_cluster()
     print("MySQL cluster setup complete. Waiting for 30 seconds...")
     time.sleep(30)
+
+    if instances:
+        print("Configuring security...")
+        configure_security(instances, cluster_setup.key_pair_path)
+    print("Security configuration complete.")
     
     print("Deploying code on instances...")
     deploy_code_on_instances()

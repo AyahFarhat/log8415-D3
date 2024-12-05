@@ -6,9 +6,6 @@ import boto3
 
 class InstanceDiscovery:
     def __init__(self, region='us-east-1'):
-        """
-        Initialize AWS EC2 resource for IP discovery.
-        """
         self.ec2_resource = boto3.resource('ec2', region_name=region)
     
     def get_instance_ip_by_name(self, instance_name):

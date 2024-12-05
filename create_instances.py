@@ -28,7 +28,7 @@ class MySQLClusterSetup:
         """
         Initialize AWS resources and configurations
         """
-        # Get public IP address of the user
+        # Get public IP address of my machine
         self.my_ip = requests.get('https://api.ipify.org').text + "/32"
         
         # AWS Clients
@@ -154,7 +154,6 @@ class MySQLClusterSetup:
                         if not source_sg_id:
                             raise Exception(f"Source security group {rule['source_sg']} not found.")
                         
-                        # Use IpPermissions to set the rule with protocol and ports
                         security_group.authorize_ingress(
                             IpPermissions=[
                                 {
@@ -167,8 +166,6 @@ class MySQLClusterSetup:
                                 }
                             ]
                         )
-
-
             
             except Exception as e:
                 print(f"Error adding rules to security group {sg_config['name']}: {e}")
@@ -176,9 +173,7 @@ class MySQLClusterSetup:
         return security_group_ids
 
     def launch_instances(self, security_group_ids):
-        """
-        Launch EC2 instances for the MySQL cluster
-        """
+
         launched_instances = {}
         
         # Combine all instance configurations
@@ -219,7 +214,6 @@ class MySQLClusterSetup:
                     ]
                 )[0]
                 
-                # Wait for instance to be running
                 instance.wait_until_running()
                 instance.reload()
                 
@@ -417,10 +411,10 @@ class MySQLClusterSetup:
             instances = self.launch_instances(security_group_ids)
             print("instances", instances)
 
-            # # # Wait for instances to be fully initialized
+            #Wait for instances to be fully initialized
             time.sleep(60)
             
-            # # # Install MySQL and Sakila
+            #Install MySQL and Sakila
             self.install_mysql_and_sakila(instances)
                         
             print("MySQL Cluster Setup Complete!")
@@ -471,7 +465,6 @@ def secure_instance(ssh_client, instance_name, gatekeeper_ip):
         
         disable_ports_commands += ["sudo ufw enable"]  # Enable UFW rules
 
-        # Execute Commands
         for cmd in firewall_commands + disable_ports_commands:
             stdin, stdout, stderr = ssh_client.exec_command(cmd)
             print(f"Executing on {instance_name}: {cmd}")

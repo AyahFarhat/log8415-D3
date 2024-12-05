@@ -6,9 +6,6 @@ import httpx
 
 class InstanceDiscovery:
     def __init__(self, region='us-east-1'):
-        """
-        Initialize AWS EC2 resource for IP discovery.
-        """
         self.ec2_resource = boto3.resource('ec2', region_name=region)
     
     def get_instance_ip_by_name(self, instance_name):
@@ -38,9 +35,6 @@ class InstanceDiscovery:
 
 
 async def send_requests(gatekeeper_url, mode, num_requests, read_query, write_query):
-    """
-    Send `num_requests` read and write requests to the Gatekeeper and measure performance.
-    """
     # Set the mode on the Gatekeeper
     async with httpx.AsyncClient() as client:
         response = await client.put(f"{gatekeeper_url}/set_mode/{mode}")
@@ -71,7 +65,6 @@ async def send_requests(gatekeeper_url, mode, num_requests, read_query, write_qu
             if response.status_code != 200:
                 print(f"Write request failed: {response.text}")
 
-    # Calculate and return metrics
     avg_read_time = sum(read_times) / len(read_times)
     avg_write_time = sum(write_times) / len(write_times)
 
@@ -85,9 +78,7 @@ async def send_requests(gatekeeper_url, mode, num_requests, read_query, write_qu
 
 
 async def benchmark(gatekeeper_url, num_requests, read_query, write_query):
-    """
-    Benchmark the three modes and print the results.
-    """
+
     results = []
 
     for mode in ["direct", "random", "customized"]:
@@ -117,7 +108,6 @@ async def benchmark_all():
     write_query = {"query": "INSERT INTO sakila.actor (first_name, last_name) VALUES ('Test', 'User')"}
     num_requests = 1000
 
-    # Call the benchmark coroutine directly (no nested asyncio.run)
     await benchmark(gatekeeper_url, num_requests, read_query, write_query)
 
 
